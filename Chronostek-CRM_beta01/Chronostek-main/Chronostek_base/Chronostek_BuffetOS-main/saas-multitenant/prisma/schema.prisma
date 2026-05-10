@@ -1,0 +1,557 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ AUTENTICAÇÃO E USUÁRIOS ============
+model User {
+  id                    String     @id @default(cuid())
+  email                 String     @unique
+  name                  String
+  password              String
+  avatar                String?
+  phone                 String?
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
+  
+  // Relacionamentos
+  role                  Role       @relation(fields: [roleId], references: [id])
+  roleId                String
+  
+  company               Company?   @relation("UserCompany", fields: [companyId], references: [id])
+  companyId             String?
+  
+  costCenter            CostCenter? @relation("UserCostCenter", fields: [costCenterId], references: [id])
+  costCenterId          String?
+  
+  // Conteúdo relacionado
+  leadsCreated          Lead[] @relation("LeadCreatedBy")
+  leadsResponsible      Lead[] @relation("LeadResponsible")
+  
+  contracts             Contract[] @relation("ContractCreatedBy")
+  projects              Project[] @relation("ProjectOwner")
+  timesheets            Timesheet[] @relation("TimesheetUser")
+  
+  campaignsCreated      Campaign[] @relation("CampaignCreatedBy")
+  
+  payments              Payment[] @relation("PaymentRecordedBy")
+  expenses              Expense[] @relation("ExpenseRecordedBy")
+  
+  @@index([companyId])
+  @@index([costCenterId])
+  @@index([roleId])
+}
+
+model Role {
+  id        String   @id @default(cuid())
+  name      String   @unique // Admin, Financeiro, Comercial, TI, Marketing, BDR
+  slug      String   @unique
+  permissions String[] // JSON array de permissões
+  users     User[]
+  
+  @@map("roles")
+}
+
+// ============ EMPRESA E ESTRUTURA ============
+model Company {
+  id            String   @id @default(cuid())
+  name          String
+  slug          String   @unique
+  email         String
+  phone         String?
+  logo          String?
+  website       String?
+  cnpj          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  users         User[] @relation("UserCompany")
+  costCenters   CostCenter[]
+  clients       Client[]
+  contracts     Contract[]
+  projects      Project[]
+  leads         Lead[]
+  campaigns     Campaign[]
+  payments      Payment[]
+  expenses      Expense[]
+  timesheets    Timesheet[]
+  recipeCategories RecipeCategory[] @relation("RecipeCategoryCompany")
+  expenseCategories ExpenseCategory[] @relation("ExpenseCategoryCompany")
+  
+  @@map("companies")
+}
+
+model CostCenter {
+  id            String   @id @default(cuid())
+  code          String   // 1000, 2000, 3000, 4000
+  name          String   // Diretoria Financeira, etc
+  description   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId     String
+  
+  users         User[] @relation("UserCostCenter")
+  expenses      Expense[]
+  
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("cost_centers")
+}
+
+// ============ CLIENTES ============
+model Client {
+  id              String   @id @default(cuid())
+  name            String
+  email           String
+  phone           String?
+  cnpj            String?
+  cpf             String?
+  website         String?
+  address         String?
+  city            String?
+  state           String?
+  zip             String?
+  notes           String?
+  status          ClientStatus @default(ACTIVE) // ACTIVE, INACTIVE, PROSPECT
+  healthScore     Int      @default(100) // 0-100
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  // Relacionamentos
+  contracts       Contract[]
+  projects        Project[]
+  payments        Payment[]
+  leads           Lead[] @relation("LeadClient")
+  
+  @@index([companyId])
+  @@index([email])
+  @@map("clients")
+}
+
+enum ClientStatus {
+  ACTIVE
+  INACTIVE
+  PROSPECT
+}
+
+// ============ LEADS ============
+model Lead {
+  id              String   @id @default(cuid())
+  title           String   // Nome do lead
+  email           String
+  phone           String?
+  company         String?
+  budget          Float?
+  
+  // Rastreamento
+  source          LeadSource // Google, Instagram, LinkedIn, Indicação, Cold Call, etc
+  campaign        String?    // Nome da campanha
+  channel         String?    // Pago, Orgânico, Direto
+  origin          String?    // Detalhado (ex: Google Ads - Search)
+  
+  status          LeadStatus @default(NEW) // NEW, CONTACTED, QUALIFIED, PROPOSAL, LOST, CONVERTED
+  probability     Int        @default(0)    // 0-100%
+  
+  notes           String?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  convertedAt     DateTime?
+  
+  // Relacionamentos
+  company         Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  createdBy       User       @relation("LeadCreatedBy", fields: [createdById], references: [id])
+  createdById     String
+  
+  responsible    User?       @relation("LeadResponsible", fields: [responsibleId], references: [id])
+  responsibleId  String?
+  
+  client          Client?    @relation("LeadClient", fields: [clientId], references: [id], onDelete: SetNull)
+  clientId        String?
+  
+  @@index([companyId])
+  @@index([source])
+  @@index([status])
+  @@index([createdById])
+  @@map("leads")
+}
+
+enum LeadSource {
+  GOOGLE_ADS
+  GOOGLE_ORGANIC
+  INSTAGRAM
+  FACEBOOK
+  LINKEDIN
+  INDICACAO
+  COLD_CALL
+  EMAIL
+  EVENTO
+  WHATSAPP
+  WEBSITE
+  OUTRO
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  LOST
+  CONVERTED
+}
+
+// ============ CONTRATOS ============
+model Contract {
+  id              String   @id @default(cuid())
+  number          String   @unique
+  title           String
+  description     String?
+  
+  // Valores e datas
+  value           Float
+  discountPercent Float    @default(0)
+  discountValue   Float    @default(0)
+  finalValue      Float
+  
+  startDate       DateTime
+  endDate         DateTime?
+  
+  // Competência financeira (quando os serviços são prestados)
+  competenceStart DateTime
+  competenceEnd   DateTime?
+  
+  // Recorrência
+  isRecurring     Boolean  @default(false)  // MRR
+  recurringType   RecurringType? // MONTHLY, QUARTERLY, ANNUALLY
+  
+  // Status
+  status          ContractStatus @default(ACTIVE) // ACTIVE, INADIMPLENT, AT_RISK, CANCELLED, RENEWAL_SOON
+  paymentStatus   PaymentStatus  @default(PENDING) // PENDING, PARTIAL, PAID
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relacionamentos
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientId        String
+  
+  createdBy       User     @relation("ContractCreatedBy", fields: [createdById], references: [id])
+  createdById     String
+  
+  projects        Project[]
+  payments        Payment[]
+  
+  @@index([companyId])
+  @@index([clientId])
+  @@index([status])
+  @@map("contracts")
+}
+
+enum RecurringType {
+  MONTHLY
+  QUARTERLY
+  SEMI_ANNUALLY
+  ANNUALLY
+}
+
+enum ContractStatus {
+  ACTIVE
+  INADIMPLENT
+  AT_RISK
+  CANCELLED
+  RENEWAL_SOON
+}
+
+enum PaymentStatus {
+  PENDING
+  PARTIAL
+  PAID
+}
+
+// ============ PROJETOS ============
+model Project {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  
+  // Valores
+  budget          Float
+  spent           Float    @default(0)
+  margin          Float    @default(0)  // calculado: budget - spent
+  
+  // Datas
+  startDate       DateTime
+  endDate         DateTime?
+  expectedEndDate DateTime?
+  
+  status          ProjectStatus @default(PLANNING) // PLANNING, IN_PROGRESS, REVIEW, COMPLETED, CANCELLED
+  priority        Priority      @default(MEDIUM)  // LOW, MEDIUM, HIGH, CRITICAL
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relacionamentos
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  contract        Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contractId      String
+  
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientId        String
+  
+  owner           User     @relation("ProjectOwner", fields: [ownerId], references: [id])
+  ownerId         String
+  
+  timesheets      Timesheet[]
+  
+  @@index([companyId])
+  @@index([contractId])
+  @@index([clientId])
+  @@index([status])
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  PLANNING
+  IN_PROGRESS
+  REVIEW
+  COMPLETED
+  CANCELLED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ============ TIMESHEET (Horas) ============
+model Timesheet {
+  id              String   @id @default(cuid())
+  date            DateTime
+  hours           Float    // Quantidade de horas
+  description     String
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  user            User     @relation("TimesheetUser", fields: [userId], references: [id])
+  userId          String
+  
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId       String
+  
+  @@index([companyId])
+  @@index([userId])
+  @@index([projectId])
+  @@index([date])
+  @@map("timesheets")
+}
+
+// ============ CAMPANHAS DE MARKETING ============
+model Campaign {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  
+  // Orçamento
+  budget          Float
+  spent           Float    @default(0)
+  roi             Float    @default(0)  // calculado
+  
+  // Datas
+  startDate       DateTime
+  endDate         DateTime?
+  
+  // Métricas
+  leadsGenerated  Int      @default(0)
+  conversions     Int      @default(0)
+  status          CampaignStatus @default(PLANNING)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  createdBy       User     @relation("CampaignCreatedBy", fields: [createdById], references: [id])
+  createdById     String
+  
+  @@index([companyId])
+  @@map("campaigns")
+}
+
+enum CampaignStatus {
+  PLANNING
+  ACTIVE
+  COMPLETED
+  PAUSED
+  CANCELLED
+}
+
+// ============ FINANCEIRO - RECEITAS ============
+model Payment {
+  id              String   @id @default(cuid())
+  number          String   
+  value           Float
+  
+  // Datas
+  expectedDate    DateTime
+  paidDate        DateTime?
+  
+  // Competência (pode ser diferente da data de pagamento)
+  competenceMonth DateTime   // Qual mês esse pagamento pertence
+  
+  status          PaymentStatus @default(PENDING) // PENDING, PAID, OVERDUE, CANCELLED
+  method          PaymentMethod // BANK_TRANSFER, CREDIT_CARD, PIX, CASH
+  notes           String?
+  
+  description     String? // Descrição do que foi pago
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  contract        Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  contractId      String
+  
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientId        String
+  
+  recipeCategory  RecipeCategory? @relation("PaymentRecipeCategory", fields: [recipeCategoryId], references: [id], onDelete: SetNull)
+  recipeCategoryId String?
+  
+  recordedBy      User     @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  recordedById    String
+  
+  @@unique([companyId, number])
+  @@index([companyId])
+  @@index([contractId])
+  @@index([clientId])
+  @@index([status])
+  @@index([recipeCategoryId])
+  @@map("payments")
+}
+
+enum PaymentMethod {
+  BANK_TRANSFER
+  CREDIT_CARD
+  PIX
+  CASH
+  CHECK
+  OTHER
+}
+
+// ============ FINANCEIRO - DESPESAS ============
+model Expense {
+  id              String   @id @default(cuid())
+  description     String
+  value           Float
+  
+  // Datas
+  date            DateTime
+  
+  // Competência (pode ser diferente da data de pagamento)
+  competenceMonth DateTime
+  
+  status          ExpenseStatus @default(PENDING) // PENDING, APPROVED, PAID, REJECTED
+  method          PaymentMethod
+  
+  notes           String?
+  receipt         String?  // URL/path do recibo
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  company         Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  costCenter      CostCenter @relation(fields: [costCenterId], references: [id], onDelete: Cascade)
+  costCenterId    String
+  
+  expenseCategory ExpenseCategory? @relation("ExpenseExpenseCategory", fields: [expenseCategoryId], references: [id], onDelete: SetNull)
+  expenseCategoryId String?
+  
+  recordedBy      User     @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
+  recordedById    String
+  
+  @@index([companyId])
+  @@index([costCenterId])
+  @@index([expenseCategoryId])
+  @@index([status])
+  @@map("expenses")
+}
+
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  PAID
+  REJECTED
+}
+
+// ============ CATEGORIAS FINANCEIRAS - RECEITAS ============
+model RecipeCategory {
+  id              String   @id @default(cuid())
+  code            String   // 1.1, 1.2, 1.3, etc
+  name            String   // Desenvolvimento, Mensalidades, etc
+  description     String?
+  color           String?  // Para UI (hex color)
+  isActive        Boolean  @default(true)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  company         Company  @relation("RecipeCategoryCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  payments        Payment[] @relation("PaymentRecipeCategory")
+  
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("recipe_categories")
+}
+
+// ============ CATEGORIAS FINANCEIRAS - DESPESAS ============
+model ExpenseCategory {
+  id              String   @id @default(cuid())
+  code            String   // 2.1, 2.2, 2.3, etc
+  name            String   // Comissão, VPS/Cloud, etc
+  description     String?
+  color           String?  // Para UI (hex color)
+  isActive        Boolean  @default(true)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  company         Company  @relation("ExpenseCategoryCompany", fields: [companyId], references: [id], onDelete: Cascade)
+  companyId       String
+  
+  expenses        Expense[] @relation("ExpenseExpenseCategory")
+  
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("expense_categories")
+}
